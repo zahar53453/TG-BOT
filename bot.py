@@ -33,12 +33,19 @@ from wunderground_pws_fetcher import (
     fetch_wunderground_pws_observation,
 )
 from wunderground_pws_formatter import build_wunderground_pws_message
+from openweather_onecall_fetcher import (
+    OpenWeatherOneCallConfig,
+    fetch_openweather_current,
+)
+from openweather_onecall_formatter import build_openweather_current_message
 from storage import (
     init_blick,
     init_icon_d2,
+    init_openweather_observation,
     init_wunderground_observation,
     is_blick_updated,
     is_icon_d2_new,
+    is_new_openweather_observation,
     is_new_wunderground_observation,
     is_new_metar,
     is_new_meteofrance_obs,
@@ -273,7 +280,11 @@ async def taf_loop(bot: Bot, sc: ScannerConfig) -> None:
 
     taf_raw = await fetch_taf_noaa(icao)
     if taf_raw:
-        message = build_taf_message(icao, taf_raw)
+        try:
+            message = build_taf_message(icao, taf_raw)
+        except Exception as exc:
+            log.exception(f"[{icao}] TAF init parse failed: {exc}")
+            message = None
         sent = True
         if message:
             sent = await send_to_all(bot, message, sc.chat_ids)
@@ -297,7 +308,11 @@ async def taf_loop(bot: Bot, sc: ScannerConfig) -> None:
 
         if is_new_taf(icao, taf_raw):
             log.info(f"[{icao}] new TAF detected")
-            message = build_taf_message(icao, taf_raw)
+            try:
+                message = build_taf_message(icao, taf_raw)
+            except Exception as exc:
+                log.exception(f"[{icao}] TAF parse failed: {exc}")
+                continue
             sent = True
             if message:
                 sent = await send_to_all(bot, message, sc.chat_ids)
@@ -407,6 +422,13 @@ def _wunderground_pws_config() -> Optional[WundergroundPwsConfig]:
     return WundergroundPwsConfig(**raw)
 
 
+def _openweather_onecall_config() -> Optional[OpenWeatherOneCallConfig]:
+    raw = getattr(cfg, "OPENWEATHER_ONECALL", None)
+    if not raw or not raw.get("chat_ids") or not raw.get("api_key"):
+        return None
+    return OpenWeatherOneCallConfig(**raw)
+
+
 async def _icon_forecast_loop(bot: Bot, icon_cfg: IconModelConfig) -> None:
     log.info("[%s] ICON loop started (%s, chats: %s)", icon_cfg.key, icon_cfg.model, icon_cfg.chat_ids)
 
@@ -497,6 +519,49 @@ async def wunderground_pws_loop(bot: Bot) -> None:
             log.debug("[WU PWS] unchanged")
 
 
+async def openweather_onecall_loop(bot: Bot) -> None:
+    ow_cfg = _openweather_onecall_config()
+    if not ow_cfg:
+        log.warning("[OWM] chat_ids/api_key not configured")
+        return
+
+    log.info(
+        "[OWM] loop started for %s (poll every %ss, chats: %s)",
+        ow_cfg.airport_name,
+        ow_cfg.poll_interval,
+        ow_cfg.chat_ids,
+    )
+
+    observation = await fetch_openweather_current(ow_cfg)
+    if observation:
+        message = build_openweather_current_message(observation)
+        sent = await send_to_all(bot, message, ow_cfg.chat_ids)
+        if sent:
+            init_openweather_observation(ow_cfg.key, observation.observed_at_unix)
+            log.info("[OWM] init sent: %s", observation.observed_at_utc)
+        else:
+            log.warning("[OWM] init detected but not fully delivered")
+    else:
+        log.warning("[OWM] init: no data")
+
+    while True:
+        await asyncio.sleep(ow_cfg.poll_interval)
+        observation = await fetch_openweather_current(ow_cfg)
+        if not observation:
+            log.warning("[OWM] no data")
+            continue
+        if is_new_openweather_observation(ow_cfg.key, observation.observed_at_unix):
+            message = build_openweather_current_message(observation)
+            sent = await send_to_all(bot, message, ow_cfg.chat_ids)
+            if sent:
+                init_openweather_observation(ow_cfg.key, observation.observed_at_unix)
+                log.info("[OWM] new observation: %s", observation.observed_at_utc)
+            else:
+                log.warning("[OWM] new observation detected but not fully delivered, will retry")
+        else:
+            log.debug("[OWM] unchanged")
+
+
 async def run_scanner(bot: Bot, sc: ScannerConfig) -> None:
     await asyncio.gather(
         metar_loop(bot, sc),
@@ -557,6 +622,8 @@ async def main(scanner_keys: Optional[list] = None) -> None:
         tasks.append(icon_d2_loop(bot))
     if _wunderground_pws_config():
         tasks.append(wunderground_pws_loop(bot))
+    if _openweather_onecall_config():
+        tasks.append(openweather_onecall_loop(bot))
     await asyncio.gather(*tasks)
 
 

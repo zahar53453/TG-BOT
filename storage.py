@@ -7,6 +7,7 @@ _last_blick: dict = {}
 _last_icon_forecast_fingerprints: dict[str, str] = {}
 _last_meteofrance_obs_validity: dict[str, str] = {}
 _last_wunderground_obs_time: dict[str, str] = {}
+_last_openweather_obs_time: dict[str, int] = {}
 
 
 def is_updated(icao: str, aw_metar_str: str) -> bool:
@@ -74,3 +75,11 @@ def is_new_wunderground_observation(key: str, observed_at_utc: str) -> bool:
 
 def init_wunderground_observation(key: str, observed_at_utc: str) -> None:
     _last_wunderground_obs_time[key] = observed_at_utc
+
+
+def is_new_openweather_observation(key: str, observed_at_unix: int) -> bool:
+    return _last_openweather_obs_time.get(key) != observed_at_unix
+
+
+def init_openweather_observation(key: str, observed_at_unix: int) -> None:
+    _last_openweather_obs_time[key] = observed_at_unix

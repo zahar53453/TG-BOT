@@ -450,13 +450,22 @@ def _format_dt_utc(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).strftime("%d %b %Y %H:%M UTC")
 
 
+def _taf_datetime(day: int, hour: int, minute: int, reference: datetime) -> datetime:
+    """Build a TAF timestamp, allowing the aviation-specific 24:00 notation."""
+    base = _resolve_taf_day(day, reference)
+    if hour == 24:
+        return base.replace(hour=0, minute=minute, second=0, microsecond=0) + timedelta(days=1)
+    return base.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+
 def _parse_taf_issue_time(token: str, reference: datetime) -> Optional[datetime]:
     match = re.fullmatch(r"(\d{2})(\d{2})(\d{2})Z", token)
     if not match:
         return None
     day, hour, minute = map(int, match.groups())
-    base = _resolve_taf_day(day, reference)
-    return base.replace(hour=hour, minute=minute)
+    if hour > 23:
+        return None
+    return _taf_datetime(day, hour, minute, reference)
 
 
 def _parse_taf_period(token: str, reference: datetime) -> Optional[tuple[datetime, datetime]]:
@@ -464,8 +473,10 @@ def _parse_taf_period(token: str, reference: datetime) -> Optional[tuple[datetim
     if not match:
         return None
     start_day, start_hour, end_day, end_hour = map(int, match.groups())
-    start = _resolve_taf_day(start_day, reference).replace(hour=start_hour, minute=0)
-    end = _resolve_taf_day(end_day, reference).replace(hour=end_hour, minute=0)
+    if start_hour > 24 or end_hour > 24:
+        return None
+    start = _taf_datetime(start_day, start_hour, 0, reference)
+    end = _taf_datetime(end_day, end_hour, 0, reference)
     if end <= start:
         end += timedelta(days=1)
     return start, end
@@ -567,7 +578,10 @@ def _decode_taf_temperature_extreme(token: str, reference: datetime) -> Optional
     value = int(value_token.replace("M", ""))
     if value_token.startswith("M"):
         value = -value
-    moment = _resolve_taf_day(int(day_token), reference).replace(hour=int(hour_token), minute=0)
+    hour = int(hour_token)
+    if hour > 24:
+        return None
+    moment = _taf_datetime(int(day_token), hour, 0, reference)
     label = "максимальная температура" if kind == "TX" else "минимальная температура"
     return f"{label} {value}°C к {_format_dt_utc(moment)}"
 
@@ -662,7 +676,9 @@ def _decode_taf_section_period(section: dict, reference: datetime) -> str:
         day = int(period[:2])
         hour = int(period[2:4])
         minute = int(period[4:6])
-        start = _resolve_taf_day(day, reference).replace(hour=hour, minute=minute)
+        if hour > 23:
+            return period
+        start = _taf_datetime(day, hour, minute, reference)
         return f"с {_format_dt_utc(start)}"
     if period:
         parsed = _parse_taf_period(period, reference)
