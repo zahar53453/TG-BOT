@@ -18,7 +18,7 @@ def _cfg_application_id() -> str:
         return ""
 
 TOKEN_URL = "https://portail-api.meteofrance.fr/token"
-BASE_URL = "https://public-api.meteofrance.fr/public/DPObs"
+BASE_URL = "https://public-api.meteofrance.fr/public/DPObs/v2"
 DEFAULT_STATION_ID = "95088001"  # Le Bourget aeroport / Bonneuil-en-France
 
 
@@ -76,10 +76,6 @@ class MeteoFranceTokenProvider:
         return datetime.now(timezone.utc) < self._expires_at
 
     def get_token(self) -> Optional[str]:
-        direct_token = self._direct_token()
-        if direct_token:
-            return direct_token
-
         if self._is_valid():
             return self._token
 
@@ -118,6 +114,15 @@ def meteofrance_is_configured() -> bool:
     return _token_provider.is_configured()
 
 
+def _auth_headers(token: str, *, direct_token: bool) -> dict[str, str]:
+    headers = {"accept": "application/json"}
+    if direct_token:
+        headers["apikey"] = token
+    else:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
 def _latest_obs_6m_date_utc(now: Optional[datetime] = None) -> str:
     """
     Return the latest valid 6-minute timestamp accepted by the API.
@@ -129,6 +134,24 @@ def _latest_obs_6m_date_utc(now: Optional[datetime] = None) -> str:
     minute = current.minute - (current.minute % 6)
     rounded = current.replace(minute=minute, second=0, microsecond=0)
     return rounded.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _candidate_obs_6m_dates_utc(now: Optional[datetime] = None) -> list[str]:
+    """
+    Build a short fallback list of recent 6-minute timestamps.
+
+    Although the API documentation says it returns the nearest available data
+    for a requested timestamp, in practice some station/date combinations may
+    return an empty payload for the freshest slot. We therefore probe a small
+    recent window backwards.
+    """
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    minute = current.minute - (current.minute % 6)
+    rounded = current.replace(minute=minute, second=0, microsecond=0)
+    return [
+        (rounded - timedelta(minutes=6 * offset)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for offset in range(0, 7)
+    ]
 
 
 def _kelvin_to_celsius(value: Optional[float]) -> Optional[float]:
@@ -179,38 +202,44 @@ def _parse_observation(config: MeteoFranceObsConfig, payload: object) -> Optiona
 
 
 def _fetch_sync(config: MeteoFranceObsConfig) -> Optional[MeteoFranceObservation]:
-    token = _token_provider.get_token()
+    direct_token = _token_provider._direct_token()
+    token = direct_token or _token_provider.get_token()
     if not token:
         log.warning("[MF 6m] application ID not configured or token unavailable")
         return None
 
-    params = {
-        "id_station": config.station_id,
-        "date": _latest_obs_6m_date_utc(),
-        "format": "geojson",
-    }
-
     try:
         with httpx.Client(timeout=20.0, trust_env=False) as client:
-            response = client.get(
-                f"{BASE_URL}/station/infrahoraire-6m",
-                params=params,
-                headers={"Authorization": f"Bearer {token}", "accept": "application/json"},
-            )
-            if response.status_code == 401:
-                _token_provider._token = ""
-                _token_provider._expires_at = None
-                token = _token_provider.get_token()
-                if not token:
-                    return None
+            for date_candidate in _candidate_obs_6m_dates_utc():
+                params = {
+                    "id_station": config.station_id,
+                    "date": date_candidate,
+                    "format": "geojson",
+                }
                 response = client.get(
                     f"{BASE_URL}/station/infrahoraire-6m",
                     params=params,
-                    headers={"Authorization": f"Bearer {token}", "accept": "application/json"},
+                    headers=_auth_headers(token, direct_token=bool(direct_token)),
                 )
+                if response.status_code == 401 and not direct_token:
+                    _token_provider._token = ""
+                    _token_provider._expires_at = None
+                    token = _token_provider.get_token()
+                    if not token:
+                        return None
+                    response = client.get(
+                        f"{BASE_URL}/station/infrahoraire-6m",
+                        params=params,
+                        headers=_auth_headers(token, direct_token=False),
+                    )
 
-            response.raise_for_status()
-            return _parse_observation(config, response.json())
+                response.raise_for_status()
+                observation = _parse_observation(config, response.json())
+                if observation:
+                    return observation
+
+            log.warning("[%s] MF 6m returned no observation for recent dates", config.key)
+            return None
     except httpx.HTTPStatusError as exc:
         body = exc.response.text.strip()
         if body:
