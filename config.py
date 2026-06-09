@@ -19,15 +19,12 @@ METEOFRANCE_6M = {
     "poll_interval": 60,
 }
 
-WUNDERGROUND_PWS = {
-    "key": "EDDM_IOBERD38",
-    "station_id": "IOBERD38",
-    "station_name": "Schwaig / EDDM area",
-    "api_key": os.getenv("WUNDERGROUND_PWS_API_KEY", "").strip(),
-    "dashboard_url": "https://www.wunderground.com/dashboard/pws/IOBERD38",
+BRIGHTSKY_CURRENT = {
+    "key": "EDDM_BRIGHTSKY_10870",
+    "wmo_station_id": "10870",
+    "station_name": "Muenchen-Flughafen / EDDM",
     "chat_ids": [-1003996854328],
-    "poll_interval": 300,
-    "units": "m",
+    "poll_interval": 60,
 }
 
 ICON_D2 = {

@@ -6,7 +6,7 @@ _last_taf_raw: dict[str, str] = {}
 _last_blick: dict = {}
 _last_icon_forecast_fingerprints: dict[str, str] = {}
 _last_meteofrance_obs_validity: dict[str, str] = {}
-_last_wunderground_obs_time: dict[str, str] = {}
+_last_brightsky_obs_time: dict[str, str] = {}
 
 
 def is_updated(icao: str, aw_metar_str: str) -> bool:
@@ -68,9 +68,9 @@ def init_icon_d2(key: str, fingerprint: str) -> None:
     _last_icon_forecast_fingerprints[key] = fingerprint
 
 
-def is_new_wunderground_observation(key: str, observed_at_utc: str) -> bool:
-    return _last_wunderground_obs_time.get(key) != observed_at_utc
+def is_new_brightsky_observation(key: str, observed_at: str) -> bool:
+    return _last_brightsky_obs_time.get(key) != observed_at
 
 
-def init_wunderground_observation(key: str, observed_at_utc: str) -> None:
-    _last_wunderground_obs_time[key] = observed_at_utc
+def init_brightsky_observation(key: str, observed_at: str) -> None:
+    _last_brightsky_obs_time[key] = observed_at

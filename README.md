@@ -25,6 +25,6 @@ This repo is prepared for Railway deploy from GitHub.
 - Required variables:
   - `BOT_TOKEN`
   - `METEOFRANCE_APPLICATION_ID`
-  - `WUNDERGROUND_PWS_API_KEY`
+  - `METEOFRANCE_API_TOKEN`
 
 The bot runs as a worker process and does not need a public domain.

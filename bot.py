@@ -28,18 +28,18 @@ from meteofrance_obs_fetcher import (
 from meteofrance_obs_formatter import build_meteofrance_obs_message
 from icon_d2_fetcher import IconModelConfig, fetch_icon_forecast, secs_until_next_run
 from icon_d2_formatter import build_icon_d2_message
-from wunderground_pws_fetcher import (
-    WundergroundPwsConfig,
-    fetch_wunderground_pws_observation,
+from brightsky_current_fetcher import (
+    BrightSkyCurrentConfig,
+    fetch_brightsky_current,
 )
-from wunderground_pws_formatter import build_wunderground_pws_message
+from brightsky_current_formatter import build_brightsky_current_message
 from storage import (
     init_blick,
+    init_brightsky_observation,
     init_icon_d2,
-    init_wunderground_observation,
     is_blick_updated,
+    is_new_brightsky_observation,
     is_icon_d2_new,
-    is_new_wunderground_observation,
     is_new_metar,
     is_new_meteofrance_obs,
     is_new_taf,
@@ -423,11 +423,11 @@ def _icon_configs() -> list[IconModelConfig]:
     return configs
 
 
-def _wunderground_pws_config() -> Optional[WundergroundPwsConfig]:
-    raw = getattr(cfg, "WUNDERGROUND_PWS", None)
-    if not raw or not raw.get("chat_ids") or not raw.get("api_key"):
+def _brightsky_current_config() -> Optional[BrightSkyCurrentConfig]:
+    raw = getattr(cfg, "BRIGHTSKY_CURRENT", None)
+    if not raw or not raw.get("chat_ids") or not raw.get("wmo_station_id"):
         return None
-    return WundergroundPwsConfig(**raw)
+    return BrightSkyCurrentConfig(**raw)
 
 
 async def _icon_forecast_loop(bot: Bot, icon_cfg: IconModelConfig) -> None:
@@ -477,47 +477,47 @@ async def icon_d2_loop(bot: Bot) -> None:
     await asyncio.gather(*[_icon_forecast_loop(bot, icon_cfg) for icon_cfg in configs])
 
 
-async def wunderground_pws_loop(bot: Bot) -> None:
-    wu_cfg = _wunderground_pws_config()
-    if not wu_cfg:
-        log.warning("[WU PWS] chat_ids not configured")
+async def brightsky_current_loop(bot: Bot) -> None:
+    bs_cfg = _brightsky_current_config()
+    if not bs_cfg:
+        log.warning("[BrightSky] chat_ids/wmo_station_id not configured")
         return
 
     log.info(
-        "[WU PWS] loop started for %s (poll every %ss, chats: %s)",
-        wu_cfg.station_id,
-        wu_cfg.poll_interval,
-        wu_cfg.chat_ids,
+        "[BrightSky] loop started for WMO %s (poll every %ss, chats: %s)",
+        bs_cfg.wmo_station_id,
+        bs_cfg.poll_interval,
+        bs_cfg.chat_ids,
     )
 
-    observation = await fetch_wunderground_pws_observation(wu_cfg)
+    observation = await fetch_brightsky_current(bs_cfg)
     if observation:
-        message = build_wunderground_pws_message(observation)
-        sent = await send_to_all(bot, message, wu_cfg.chat_ids)
+        message = build_brightsky_current_message(observation)
+        sent = await send_to_all(bot, message, bs_cfg.chat_ids)
         if sent:
-            init_wunderground_observation(wu_cfg.key, observation.observed_at_utc)
-            log.info("[WU PWS] init sent: %s", observation.observed_at_utc)
+            init_brightsky_observation(bs_cfg.key, observation.observed_at)
+            log.info("[BrightSky] init sent: %s", observation.observed_at)
         else:
-            log.warning("[WU PWS] init detected but not fully delivered")
+            log.warning("[BrightSky] init detected but not fully delivered")
     else:
-        log.warning("[WU PWS] init: no data")
+        log.warning("[BrightSky] init: no data")
 
     while True:
-        await asyncio.sleep(wu_cfg.poll_interval)
-        observation = await fetch_wunderground_pws_observation(wu_cfg)
+        await asyncio.sleep(bs_cfg.poll_interval)
+        observation = await fetch_brightsky_current(bs_cfg)
         if not observation:
-            log.warning("[WU PWS] no data")
+            log.warning("[BrightSky] no data")
             continue
-        if is_new_wunderground_observation(wu_cfg.key, observation.observed_at_utc):
-            message = build_wunderground_pws_message(observation)
-            sent = await send_to_all(bot, message, wu_cfg.chat_ids)
+        if is_new_brightsky_observation(bs_cfg.key, observation.observed_at):
+            message = build_brightsky_current_message(observation)
+            sent = await send_to_all(bot, message, bs_cfg.chat_ids)
             if sent:
-                init_wunderground_observation(wu_cfg.key, observation.observed_at_utc)
-                log.info("[WU PWS] new observation: %s", observation.observed_at_utc)
+                init_brightsky_observation(bs_cfg.key, observation.observed_at)
+                log.info("[BrightSky] new observation: %s", observation.observed_at)
             else:
-                log.warning("[WU PWS] new observation detected but not fully delivered, will retry")
+                log.warning("[BrightSky] new observation detected but not fully delivered, will retry")
         else:
-            log.debug("[WU PWS] unchanged")
+            log.debug("[BrightSky] unchanged")
 
 
 async def run_scanner(bot: Bot, sc: ScannerConfig) -> None:
@@ -578,8 +578,8 @@ async def main(scanner_keys: Optional[list] = None) -> None:
         tasks.append(meteofrance_obs_loop(bot))
     if _icon_configs():
         tasks.append(icon_d2_loop(bot))
-    if _wunderground_pws_config():
-        tasks.append(wunderground_pws_loop(bot))
+    if _brightsky_current_config():
+        tasks.append(brightsky_current_loop(bot))
     await asyncio.gather(*tasks)
 
 
