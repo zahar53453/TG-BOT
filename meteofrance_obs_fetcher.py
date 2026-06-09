@@ -118,6 +118,19 @@ def meteofrance_is_configured() -> bool:
     return _token_provider.is_configured()
 
 
+def _latest_obs_6m_date_utc(now: Optional[datetime] = None) -> str:
+    """
+    Return the latest valid 6-minute timestamp accepted by the API.
+
+    The targeted observations API now requires a `date` parameter and expects
+    minutes aligned to the 6-minute grid with seconds set to 00.
+    """
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    minute = current.minute - (current.minute % 6)
+    rounded = current.replace(minute=minute, second=0, microsecond=0)
+    return rounded.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _kelvin_to_celsius(value: Optional[float]) -> Optional[float]:
     if value is None:
         return None
@@ -171,11 +184,17 @@ def _fetch_sync(config: MeteoFranceObsConfig) -> Optional[MeteoFranceObservation
         log.warning("[MF 6m] application ID not configured or token unavailable")
         return None
 
+    params = {
+        "id_station": config.station_id,
+        "date": _latest_obs_6m_date_utc(),
+        "format": "geojson",
+    }
+
     try:
         with httpx.Client(timeout=20.0, trust_env=False) as client:
             response = client.get(
                 f"{BASE_URL}/station/infrahoraire-6m",
-                params={"id_station": config.station_id, "format": "geojson"},
+                params=params,
                 headers={"Authorization": f"Bearer {token}", "accept": "application/json"},
             )
             if response.status_code == 401:
@@ -186,7 +205,7 @@ def _fetch_sync(config: MeteoFranceObsConfig) -> Optional[MeteoFranceObservation
                     return None
                 response = client.get(
                     f"{BASE_URL}/station/infrahoraire-6m",
-                    params={"id_station": config.station_id, "format": "geojson"},
+                    params=params,
                     headers={"Authorization": f"Bearer {token}", "accept": "application/json"},
                 )
 
