@@ -175,7 +175,7 @@ def _fetch_sync(config: MeteoFranceObsConfig) -> Optional[MeteoFranceObservation
         with httpx.Client(timeout=20.0, trust_env=False) as client:
             response = client.get(
                 f"{BASE_URL}/station/infrahoraire-6m",
-                params={"id_station": config.station_id, "format": "json"},
+                params={"id_station": config.station_id, "format": "geojson"},
                 headers={"Authorization": f"Bearer {token}", "accept": "application/json"},
             )
             if response.status_code == 401:
@@ -186,12 +186,19 @@ def _fetch_sync(config: MeteoFranceObsConfig) -> Optional[MeteoFranceObservation
                     return None
                 response = client.get(
                     f"{BASE_URL}/station/infrahoraire-6m",
-                    params={"id_station": config.station_id, "format": "json"},
+                    params={"id_station": config.station_id, "format": "geojson"},
                     headers={"Authorization": f"Bearer {token}", "accept": "application/json"},
                 )
 
             response.raise_for_status()
             return _parse_observation(config, response.json())
+    except httpx.HTTPStatusError as exc:
+        body = exc.response.text.strip()
+        if body:
+            log.warning("[%s] MF 6m fetch failed: HTTP %s %s", config.key, exc.response.status_code, body[:400])
+        else:
+            log.warning("[%s] MF 6m fetch failed: %s", config.key, exc)
+        return None
     except Exception as exc:
         log.warning("[%s] MF 6m fetch failed: %s", config.key, exc)
         return None

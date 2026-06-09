@@ -33,19 +33,12 @@ from wunderground_pws_fetcher import (
     fetch_wunderground_pws_observation,
 )
 from wunderground_pws_formatter import build_wunderground_pws_message
-from openweather_onecall_fetcher import (
-    OpenWeatherOneCallConfig,
-    fetch_openweather_current,
-)
-from openweather_onecall_formatter import build_openweather_current_message
 from storage import (
     init_blick,
     init_icon_d2,
-    init_openweather_observation,
     init_wunderground_observation,
     is_blick_updated,
     is_icon_d2_new,
-    is_new_openweather_observation,
     is_new_wunderground_observation,
     is_new_metar,
     is_new_meteofrance_obs,
@@ -88,6 +81,19 @@ class ScannerConfig:
     icao: str
     chat_ids: list
     metar_minutes: list
+
+
+def _metar_identity(metar: dict) -> str:
+    """
+    Prefer the raw METAR string for deduplication.
+
+    AWC/NOAA `reportTime` may lag behind the actual observation timestamp in
+    `rawOb`, which can make on-time reports look 30 minutes late.
+    """
+    raw_ob = str(metar.get("rawOb", "")).strip()
+    if raw_ob:
+        return raw_ob
+    return str(metar.get("reportTime", "")).strip()
 
 
 def _in_metar_window(now: datetime, metar_minutes: list) -> bool:
@@ -213,12 +219,13 @@ async def metar_loop(bot: Bot, sc: ScannerConfig) -> None:
     data = await fetch_metar_noaa(icao)
     if data:
         report_time = data.get("reportTime", "")
+        metar_identity = _metar_identity(data)
         message = build_metar_message(icao, data)
         sent = True
         if message:
             sent = await send_to_all(bot, message, sc.chat_ids)
         if sent:
-            mark_metar_seen(icao, report_time)
+            mark_metar_seen(icao, metar_identity)
             log.info(f"[{icao}] METAR init sent: {report_time or 'N/A'}")
         else:
             log.warning(f"[{icao}] METAR init detected but not fully delivered")
@@ -240,14 +247,15 @@ async def metar_loop(bot: Bot, sc: ScannerConfig) -> None:
             data = await fetch_metar_noaa(icao)
             if data:
                 report_time = data.get("reportTime", "")
-                if is_new_metar(icao, report_time):
+                metar_identity = _metar_identity(data)
+                if is_new_metar(icao, metar_identity):
                     log.info(f"[{icao}] new METAR: {report_time}")
                     message = build_metar_message(icao, data)
                     sent = True
                     if message:
                         sent = await send_to_all(bot, message, sc.chat_ids)
                     if sent:
-                        mark_metar_seen(icao, report_time)
+                        mark_metar_seen(icao, metar_identity)
                         got_new = True
                     else:
                         log.warning(f"[{icao}] METAR detected but not fully delivered, will retry")
@@ -422,13 +430,6 @@ def _wunderground_pws_config() -> Optional[WundergroundPwsConfig]:
     return WundergroundPwsConfig(**raw)
 
 
-def _openweather_onecall_config() -> Optional[OpenWeatherOneCallConfig]:
-    raw = getattr(cfg, "OPENWEATHER_ONECALL", None)
-    if not raw or not raw.get("chat_ids") or not raw.get("api_key"):
-        return None
-    return OpenWeatherOneCallConfig(**raw)
-
-
 async def _icon_forecast_loop(bot: Bot, icon_cfg: IconModelConfig) -> None:
     log.info("[%s] ICON loop started (%s, chats: %s)", icon_cfg.key, icon_cfg.model, icon_cfg.chat_ids)
 
@@ -519,49 +520,6 @@ async def wunderground_pws_loop(bot: Bot) -> None:
             log.debug("[WU PWS] unchanged")
 
 
-async def openweather_onecall_loop(bot: Bot) -> None:
-    ow_cfg = _openweather_onecall_config()
-    if not ow_cfg:
-        log.warning("[OWM] chat_ids/api_key not configured")
-        return
-
-    log.info(
-        "[OWM] loop started for %s (poll every %ss, chats: %s)",
-        ow_cfg.airport_name,
-        ow_cfg.poll_interval,
-        ow_cfg.chat_ids,
-    )
-
-    observation = await fetch_openweather_current(ow_cfg)
-    if observation:
-        message = build_openweather_current_message(observation)
-        sent = await send_to_all(bot, message, ow_cfg.chat_ids)
-        if sent:
-            init_openweather_observation(ow_cfg.key, observation.observed_at_unix)
-            log.info("[OWM] init sent: %s", observation.observed_at_utc)
-        else:
-            log.warning("[OWM] init detected but not fully delivered")
-    else:
-        log.warning("[OWM] init: no data")
-
-    while True:
-        await asyncio.sleep(ow_cfg.poll_interval)
-        observation = await fetch_openweather_current(ow_cfg)
-        if not observation:
-            log.warning("[OWM] no data")
-            continue
-        if is_new_openweather_observation(ow_cfg.key, observation.observed_at_unix):
-            message = build_openweather_current_message(observation)
-            sent = await send_to_all(bot, message, ow_cfg.chat_ids)
-            if sent:
-                init_openweather_observation(ow_cfg.key, observation.observed_at_unix)
-                log.info("[OWM] new observation: %s", observation.observed_at_utc)
-            else:
-                log.warning("[OWM] new observation detected but not fully delivered, will retry")
-        else:
-            log.debug("[OWM] unchanged")
-
-
 async def run_scanner(bot: Bot, sc: ScannerConfig) -> None:
     await asyncio.gather(
         metar_loop(bot, sc),
@@ -622,8 +580,6 @@ async def main(scanner_keys: Optional[list] = None) -> None:
         tasks.append(icon_d2_loop(bot))
     if _wunderground_pws_config():
         tasks.append(wunderground_pws_loop(bot))
-    if _openweather_onecall_config():
-        tasks.append(openweather_onecall_loop(bot))
     await asyncio.gather(*tasks)
 
 

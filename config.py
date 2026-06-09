@@ -2,7 +2,6 @@ import os
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 METEOFRANCE_APPLICATION_ID = os.getenv("METEOFRANCE_APPLICATION_ID", "").strip()
-OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY", "").strip()
 
 POLL_INTERVAL = 60
 
@@ -29,19 +28,6 @@ WUNDERGROUND_PWS = {
     "chat_ids": [-1003996854328],
     "poll_interval": 300,
     "units": "m",
-}
-
-OPENWEATHER_ONECALL = {
-    "key": "LEMD_OPENWEATHER",
-    "airport_name": "Madrid Barajas (LEMD)",
-    "latitude": 40.4722,
-    "longitude": -3.5608,
-    "timezone_name": "Europe/Madrid",
-    "api_key": OPENWEATHER_API_KEY,
-    "chat_ids": [-1004251742720],
-    "poll_interval": 60,
-    "units": "metric",
-    "language": "ru",
 }
 
 ICON_D2 = {
